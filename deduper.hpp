@@ -29,16 +29,15 @@
 
 class Deduper {
 private:
-  struct ListItem {
-    Block* block = nullptr;
-    ListItem* next = nullptr;
+  struct KeyHasher {
+    ALWAYS_INLINE std::size_t operator()(const std::uint32_t& k) const { return static_cast<std::size_t>(k); }
   };
   std::array<uint8_t, Storage::BLOCK_SIZE * 2> ALIGNAS(64) buffer;
-  std::unordered_map<std::uint32_t, ListItem> map;
+  std::unordered_multimap<std::uint32_t, Block*, KeyHasher> map;
   bool Match(Block& block0, Block& block1, Storage::Manager& manager);
 public:
   Deduper() = default;
-  ~Deduper();
+  ~Deduper() = default;
   Deduper(const Deduper&) = delete;
   Deduper& operator=(const Deduper&) = delete;
   Deduper(Deduper&&) = delete;

@@ -97,70 +97,49 @@ bool Deduper::Match(Block& block0, Block& block1, Storage::Manager& manager) {
   return result;
 }
 
-Deduper::~Deduper() {
-  ListItem *i, *n;
-  for (auto item : map) {
-    i = item.second.next;
-    while (i != nullptr) {
-      n = i->next;
-      delete i;
-      i = n;
-    }
-  }
-}
-
 void Deduper::Process(Block& start, Block* end, Storage::Manager& manager) {
   if ((start.data == nullptr) || (start.level >= Block::MAX_RECURSION_LEVEL))
     return;
-
   Block* block = &start;
-  ListItem* entry;
   while ((block != nullptr) && (block != end)) {
     assert(block->hashed);
-    entry = &map[block->hash];
-    // first entry?
-    if (entry->block == nullptr)
-      entry->block = block;
-    else {
-      // loop through list
-      while (entry != nullptr) {
-        // block was already processed?
-        if (entry->block == block)
-          break;
-        // check for match
-        else if (Match(*entry->block, *block, manager)) {
-          // free any previously allocated info for this block
-          block->DeleteInfo();
-          // now free any childs
-          block->DeleteChilds(manager);
-          if (block->level > 0) {
-            Streams::HybridStream* stream = reinterpret_cast<Streams::HybridStream*>(block->data);
-            // free the stream if possible
-            if ((block->offset == 0) && (block->length == block->data->Size())) {
-              assert(stream->reference_count == 0);
-              manager.Delete(stream);
-            }
-            // otherwise just decrease its reference count
-            else
-              stream->reference_count -= (stream->reference_count > 0);
+    bool found = false;
+    // loop through all entries with this hash
+    for (auto it = map.find(block->hash); (it != map.end()) && map.key_eq()(it->first, block->hash); ++it) {
+      found = (it->second == block);
+      // block was already processed?
+      if (UNLIKELY(found))
+        break;
+      else if (Match(*it->second, *block, manager)) {
+        // free any previously allocated info for this block
+        block->DeleteInfo();
+        // now free any childs
+        block->DeleteChilds(manager);
+        if (block->level > 0) {
+          Streams::HybridStream* stream = reinterpret_cast<Streams::HybridStream*>(block->data);
+          // free the stream if possible
+          if ((block->offset == 0) && (block->length == block->data->Size())) {
+            assert(stream->reference_count == 0);
+            manager.Delete(stream);
           }
-          block->type = Block::Type::Dedup;
-          // info now points to the block we deduplicated from
-          block->info = entry->block;
-          block->done = true;
-          break;
+          // otherwise just decrease its reference count
+          else
+            stream->reference_count -= (stream->reference_count > 0);
         }
-        // end of the list and no match found?
-        else if (entry->next == nullptr) {
-          // append this block
-          entry->next = new ListItem;
-          entry->next->block = block;
-          break;
-        }
-        else
-          entry = entry->next;
+        block->type = Block::Type::Dedup;
+        // info now points to the block we deduplicated from
+        block->info = it->second;
+        block->done = true;
+        found = true;
+        break;
       }
     }
+    if (!found)
+      map.emplace(
+        std::piecewise_construct,
+        std::forward_as_tuple(block->hash),
+        std::forward_as_tuple(block)
+      );
     // recurse if possible
     if (block->child != nullptr)
       Process(*block->child, nullptr, manager);
